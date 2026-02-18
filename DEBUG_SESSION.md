@@ -230,12 +230,22 @@ const maxRecordsPerBatch = limit && limit > 0
 - GDELT rate limiting: **HANDLED**
 - Error handling: **IMPROVED**
 
+## GDELT API Contact Information
+
+**Rate Limit**: One request every 5 seconds  
+**Contact for Larger Queries**: kalev.leetaru5@gmail.com  
+**API Documentation**: https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts  
+**API Endpoint**: https://api.gdeltproject.org/api/v2/doc/doc
+
+**Note**: GDELT DOC 2.0 API is FREE and PUBLIC - NO API KEY REQUIRED. Rate limits apply but no authentication is needed.
+
 ## Next Steps (Optional)
 
 1. Consider adding retry logic for failed scrape jobs
 2. Add monitoring/alerting for stuck jobs
 3. Consider caching GDELT results to reduce API calls
 4. Add user-facing error messages for rate limit scenarios
+5. Contact GDELT team (kalev.leetaru5@gmail.com) if higher rate limits are needed
 
 ---
 
