@@ -414,6 +414,10 @@ export async function queryGDELT(
         console.log(`[GDELT] Response keys:`, Object.keys(data));
         console.log(`[GDELT] Response sample:`, JSON.stringify(data).substring(0, 500));
 
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:queryGDELT:response',message:'GDELT API response received',data:{status:response.status,responseKeys:Object.keys(data),responseSample:JSON.stringify(data).substring(0,300)},timestamp:Date.now(),hypothesisId:'H9'})}).catch(()=>{});
+        // #endregion
+
         // Extract articles from response - GDELT may return articles directly or in a nested structure
         let articles: GDELTArticle[] = [];
         
@@ -436,11 +440,17 @@ export async function queryGDELT(
         }
 
         console.log(`[GDELT] Found ${articles.length} articles`);
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:queryGDELT:articlesExtracted',message:'Articles extracted from response',data:{articleCount:articles.length,sampleTitles:articles.slice(0,3).map(a=>a.title)},timestamp:Date.now(),hypothesisId:'H9'})}).catch(()=>{});
+        // #endregion
 
         return articles;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         console.error(`[GDELT] Attempt ${attempt} failed:`, lastError.message);
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:queryGDELT:attemptFailed',message:`GDELT attempt ${attempt} failed`,data:{attempt,error:lastError.message,errorName:lastError.name},timestamp:Date.now(),hypothesisId:'H9'})}).catch(()=>{});
+        // #endregion
         if (attempt === 3) {
           // Last attempt failed, throw the error
           throw lastError;
@@ -456,6 +466,9 @@ export async function queryGDELT(
     if (error instanceof Error) {
       console.error("[GDELT] Error message:", error.message);
       console.error("[GDELT] Error stack:", error.stack);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:queryGDELT:finalError',message:'GDELT query failed after all retries',data:{error:error.message,errorName:error.name,stack:error.stack?.substring(0,500)},timestamp:Date.now(),hypothesisId:'H9'})}).catch(()=>{});
+      // #endregion
     }
     throw error;
   }
@@ -583,14 +596,22 @@ export async function getGDELTUrls(
     delete baseOverrides.keywords;
   }
 
-  const maxRecords = limit && limit > 0
-    ? Math.min(limit, 250)
-    : (typeof baseOverrides.maxrecords === "number" ? Math.min(baseOverrides.maxrecords as number, 250) : 100);
-
   // Split subtopics into batches to avoid GDELT query-too-long errors
   const batches = subtopics && subtopics.length > 0
     ? batchSubtopics(subtopics)
     : [[]] as Array<Array<{ name: string; weight: number }>>;
+
+  // Calculate maxRecords: if limit is provided, divide it by batch count to distribute across batches
+  // Otherwise use baseOverrides.maxrecords or default to 100
+  // NOTE: This is the maxrecords PER BATCH, not total. Each batch can request up to this many.
+  // If limit is provided, we want to distribute it across batches so total doesn't exceed limit
+  const maxRecordsPerBatch = limit && limit > 0
+    ? Math.min(Math.ceil(limit / batches.length), 250) // Distribute limit across batches, cap at 250 per batch
+    : (typeof baseOverrides.maxrecords === "number" ? Math.min(baseOverrides.maxrecords as number, 250) : 100);
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:maxRecords',message:'Max records calculation',data:{limit,baseOverridesMaxrecords:baseOverrides.maxrecords,calculatedMaxRecordsPerBatch:maxRecordsPerBatch,batchCount:batches.length,expectedTotalIfAllBatchesReturnMax:maxRecordsPerBatch * batches.length,note:'maxRecords is per batch, distributed from limit'},timestamp:Date.now(),hypothesisId:'H11'})}).catch(()=>{});
+  // #endregion
 
   // #region agent log
   fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:batches',message:'Subtopic batches',data:{batchCount:batches.length,batchSizes:batches.map(b=>b.length)},timestamp:Date.now(),hypothesisId:'H7'})}).catch(()=>{});
@@ -600,15 +621,26 @@ export async function getGDELTUrls(
   const seenUrls = new Set<string>();
 
   for (let i = 0; i < batches.length; i++) {
+    // Add delay between batches to respect GDELT rate limit (5 seconds between requests)
+    if (i > 0) {
+      console.log(`[GDELT] Waiting 5 seconds before batch ${i + 1} to respect rate limit...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+    
     const batch = batches[i];
     const batchSubtopics = batch.length > 0 ? batch : undefined;
     const queryParams = await buildGDELTQueryParams(config, batchSubtopics);
     Object.assign(queryParams, baseOverrides);
-    queryParams.maxrecords = maxRecords;
+    // Set maxrecords per batch - GDELT will return up to this many articles per batch
+    // Total articles across all batches may exceed this, but we deduplicate by URL
+    queryParams.maxrecords = maxRecordsPerBatch;
     // Don't override keywords — they were set by buildGDELTQueryParams
     delete (queryParams as any).query;
 
     console.log(`[GDELT] Batch ${i + 1}/${batches.length} query:`, queryParams.keywords?.substring(0, 200));
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:batchMaxRecords',message:`Batch ${i+1} maxrecords`,data:{batch:i+1,totalBatches:batches.length,maxrecords:queryParams.maxrecords,limit,note:'This is per-batch maxrecords'},timestamp:Date.now(),hypothesisId:'H11'})}).catch(()=>{});
+    // #endregion
 
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:batchQuery',message:`Batch ${i+1} query`,data:{batch:i+1,totalBatches:batches.length,keywordsLen:queryParams.keywords?.length,keywords:queryParams.keywords?.substring(0,300)},timestamp:Date.now(),hypothesisId:'H7'})}).catch(()=>{});
@@ -616,6 +648,9 @@ export async function getGDELTUrls(
 
     try {
       const articles = await queryGDELT(queryParams);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:batchResponse',message:`Batch ${i+1} GDELT response`,data:{batch:i+1,totalBatches:batches.length,articlesReturned:articles.length,requestedMaxrecords:queryParams.maxrecords,limit,note:'Comparing requested vs returned'},timestamp:Date.now(),hypothesisId:'H17,H21'})}).catch(()=>{});
+      // #endregion
       for (const a of articles) {
         if (a.url && !seenUrls.has(a.url)) {
           seenUrls.add(a.url);
@@ -623,8 +658,14 @@ export async function getGDELTUrls(
         }
       }
       console.log(`[GDELT] Batch ${i + 1}: ${articles.length} articles (total unique: ${allArticles.length})`);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:batchSuccess',message:`Batch ${i+1} succeeded`,data:{batch:i+1,articlesReturned:articles.length,totalUnique:allArticles.length},timestamp:Date.now(),hypothesisId:'H9'})}).catch(()=>{});
+      // #endregion
     } catch (e) {
       console.error(`[GDELT] Batch ${i + 1} failed:`, e);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:batchError',message:`Batch ${i+1} failed`,data:{batch:i+1,error:String(e)},timestamp:Date.now(),hypothesisId:'H9'})}).catch(()=>{});
+      // #endregion
     }
   }
 
@@ -637,6 +678,9 @@ export async function getGDELTUrls(
   // Post-filter by language/country metadata
   const beforeLocale = filtered.length;
   filtered = applyLocaleFilter(filtered, config.targetLanguages ?? [], config.targetRegions ?? []);
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:localeFilter',message:'Locale filter applied',data:{before:beforeLocale,after:filtered.length,targetLanguages:config.targetLanguages,targetRegions:config.targetRegions},timestamp:Date.now(),hypothesisId:'H19'})}).catch(()=>{});
+  // #endregion
   if (beforeLocale !== filtered.length) {
     console.log(`[GDELT] Locale filter: ${beforeLocale} -> ${filtered.length}`);
   }
@@ -646,6 +690,14 @@ export async function getGDELTUrls(
     const beforeDomain = filtered.length;
     filtered = applyDomainFilter(filtered, domainRules);
     console.log(`[GDELT] Domain filter: ${beforeDomain} -> ${filtered.length}`);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:domainFilter',message:'Domain filter applied',data:{before:beforeDomain,after:filtered.length,rules:domainRules},timestamp:Date.now(),hypothesisId:'H10'})}).catch(()=>{});
+    // #endregion
+  } else {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:domainFilter',message:'Domain filter skipped - no rules',data:{domainRulesCount:domainRules?.length ?? 0,articlesBeforeFilter:filtered.length},timestamp:Date.now(),hypothesisId:'H10'})}).catch(()=>{});
+    // #endregion
+    console.log(`[GDELT] No domain rules configured - all domains allowed`);
   }
 
   const urls = filtered.map((article) => ({
@@ -658,6 +710,10 @@ export async function getGDELTUrls(
       seendate: article.seendate,
     },
   }));
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gdelt.ts:getGDELTUrls:finalUrls',message:'Final URLs returned',data:{totalUrls:urls.length,limit,allArticlesCount:allArticles.length,filteredCount:filtered.length,note:'If totalUrls < limit, GDELT may have returned fewer articles than requested'},timestamp:Date.now(),hypothesisId:'H11'})}).catch(()=>{});
+  // #endregion
 
   console.log(`[GDELT] Extracted ${urls.length} valid URLs`);
   // #region agent log

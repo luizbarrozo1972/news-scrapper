@@ -49,6 +49,10 @@ export function ExtractionProgressProvider({ children }: { children: React.React
       }
       const data = await res.json();
       
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extraction-progress-context.tsx:fetchProgress',message:'Status fetched from API',data:{jobId:data.jobId,status:data.status,willStopPolling:data.status === "completed" || data.status === "failed"},timestamp:Date.now(),hypothesisId:'H13'})}).catch(()=>{});
+      // #endregion
+      
       const isJobActive = data.status === "running" || data.status === "pending";
       
       setProgress({
@@ -66,6 +70,9 @@ export function ExtractionProgressProvider({ children }: { children: React.React
 
       // If job is completed or failed, stop polling but keep showing for a few seconds
       if (data.status === "completed" || data.status === "failed") {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extraction-progress-context.tsx:fetchProgress',message:'Job completed/failed - stopping polling',data:{jobId:data.jobId,status:data.status},timestamp:Date.now(),hypothesisId:'H13'})}).catch(()=>{});
+        // #endregion
         // Keep showing progress for 5 seconds before hiding
         setTimeout(() => {
           setProgress((prev) => {
@@ -94,6 +101,9 @@ export function ExtractionProgressProvider({ children }: { children: React.React
 
     // Don't poll if job is completed or failed (but still showing)
     if (progress.status === "completed" || progress.status === "failed") {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extraction-progress-context.tsx:useEffect',message:'Polling stopped - job completed/failed',data:{jobId:progress.jobId,status:progress.status},timestamp:Date.now(),hypothesisId:'H13'})}).catch(()=>{});
+      // #endregion
       return;
     }
 
@@ -103,6 +113,10 @@ export function ExtractionProgressProvider({ children }: { children: React.React
         fetchProgress(currentSlug, progress.jobId);
       }
     }, 1500);
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extraction-progress-context.tsx:useEffect',message:'Polling interval started',data:{jobId:progress.jobId,status:progress.status},timestamp:Date.now(),hypothesisId:'H13'})}).catch(()=>{});
+    // #endregion
 
     return () => clearInterval(interval);
   }, [progress.jobId, currentSlug, progress.status, fetchProgress]);

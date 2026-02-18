@@ -21,7 +21,9 @@ export async function GET(
     return NextResponse.json({ error: "Theme not found" }, { status: 404 });
   }
 
-  const ingestionJob = await prisma.ingestionJob.findUnique({
+  const readTimestamp = Date.now();
+  // Use findFirst with orderBy to ensure we get the latest data (helps with eventual consistency)
+  const ingestionJob = await prisma.ingestionJob.findFirst({
     where: { id: jobId },
     include: {
       scrapeJobs: {
@@ -32,6 +34,10 @@ export async function GET(
       },
     },
   });
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ingestion/[jobId]/status/route.ts:GET',message:'Status endpoint read from DB',data:{jobId,status:ingestionJob?.status,readTimestamp,completedAt:ingestionJob?.completedAt?.getTime()},timestamp:Date.now(),hypothesisId:'H14,H16'})}).catch(()=>{});
+  // #endregion
 
   if (!ingestionJob || ingestionJob.themeId !== theme.id) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
@@ -94,6 +100,10 @@ export async function GET(
   } else if (ingestionJob.status === "failed") {
     statusMessage = `Extração falhou: ${failedJobs} erro(s)`;
   }
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ingestion/[jobId]/status/route.ts:GET',message:'Status endpoint returning',data:{jobId:ingestionJob.id,status:ingestionJob.status,totalJobs,completedJobs,failedJobs,scrapingJobs,pendingJobs},timestamp:Date.now(),hypothesisId:'H13'})}).catch(()=>{});
+  // #endregion
 
   return NextResponse.json({
     jobId: ingestionJob.id,

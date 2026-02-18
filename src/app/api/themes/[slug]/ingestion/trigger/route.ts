@@ -81,6 +81,18 @@ export async function POST(
   const remainingBudget = budget.limit - budget.used;
   // Use dailyExtractionBudget as maxrecords for GDELT, but limit to remaining budget
   const maxUrls = Math.min(remainingBudget, config.dailyExtractionBudget);
+  
+  console.log(`[Ingestion] Budget check:`, {
+    dailyExtractionBudget: config.dailyExtractionBudget,
+    budgetLimit: budget.limit,
+    budgetUsed: budget.used,
+    remainingBudget,
+    maxUrls,
+  });
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ingestion/trigger/route.ts:POST',message:'Budget calculation',data:{dailyExtractionBudget:config.dailyExtractionBudget,budgetLimit:budget.limit,budgetUsed:budget.used,remainingBudget,maxUrls,subtopicsCount:subtopics.length},timestamp:Date.now(),hypothesisId:'H11'})}).catch(()=>{});
+  // #endregion
 
   let urls: Array<{ url: string; metadata: Partial<unknown> }> = [];
 
@@ -134,6 +146,9 @@ export async function POST(
     );
 
     console.log(`[Ingestion] ✅ GDELT returned ${urls.length} URLs for theme ${theme.slug}`);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/6e8eb9c3-853c-4fd1-bcc7-b6f3071ae589',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ingestion/trigger/route.ts:POST',message:'GDELT URLs received',data:{urlsReturned:urls.length,maxUrls,remainingBudget,sampleUrls:urls.slice(0,3).map(u=>u.url)},timestamp:Date.now(),hypothesisId:'H11'})}).catch(()=>{});
+    // #endregion
     if (urls.length > 0) {
       console.log(`[Ingestion] Sample URLs:`, urls.slice(0, 5).map((u) => u.url));
     } else {
