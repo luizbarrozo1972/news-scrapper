@@ -1,0 +1,259 @@
+// ============ AUTH & USERS ============
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  password      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  sessionToken String   @unique
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============ THEMES & CONFIG ============
+model Theme {
+  id             String   @id @default(cuid())
+  name           String
+  slug           String   @unique
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  subtopics      Subtopic[]
+  configs        ThemeConfig[]
+  delivery       ThemeDeliveryEndpoint?
+  domainRules    DomainRule[]
+  ingestionJobs  IngestionJob[]
+  extractedDocs  ExtractedDocument[]
+  newsItems      NewsItem[]
+  deliveryLogs   DeliveryLog[]
+  budgetUsage    DailyBudgetUsage[]
+  tuningRuns     DailyTuningRun[]
+}
+
+model Subtopic {
+  id      String  @id @default(cuid())
+  themeId String
+  name    String
+  slug    String
+  weight  Float   @default(1.0)
+  theme   Theme   @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  @@unique([themeId, slug])
+}
+
+model ThemeConfig {
+  id                         String   @id @default(cuid())
+  themeId                    String
+  version                    Int
+  targetLanguages            String[]
+  targetRegions              String[]
+  minTextLengthThreshold     Int      @default(500)
+  minQualityScore            Float    @default(0.6)
+  qualityFlagsHandling       Json?
+  maxRefutedClaimsBeforeHold Int?
+  scheduleCron               String?
+  dailyExtractionBudget      Int      @default(500)
+  hourlyRateLimit            Int?
+  maxArticleAge              String?  // GDELT timespan format: "24h", "7d", "30d", etc. null = no limit (last 3 months)
+  gdeltQueryParams          Json?
+  createdAt                  DateTime @default(now())
+  createdBy                  String?
+  changeReason               String?
+  theme                      Theme    @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  changeLogs                 ConfigChangeLog[]
+}
+
+model ConfigChangeLog {
+  id       String       @id @default(cuid())
+  configId String
+  diff     Json
+  reason   String
+  author   String
+  createdAt DateTime    @default(now())
+  config   ThemeConfig  @relation(fields: [configId], references: [id], onDelete: Cascade)
+}
+
+model ThemeDeliveryEndpoint {
+  id         String   @id @default(cuid())
+  themeId    String   @unique
+  url        String
+  secretHash String
+  hmacAlg    String   @default("sha256")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  theme      Theme    @relation(fields: [themeId], references: [id], onDelete: Cascade)
+}
+
+model DomainRule {
+  id      String @id @default(cuid())
+  themeId String
+  domain  String
+  rule    String
+  theme   Theme  @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  @@unique([themeId, domain])
+}
+
+// ============ JOBS & EXTRACTION ============
+model IngestionJob {
+  id             String      @id @default(cuid())
+  themeId        String
+  status         String
+  triggerType    String
+  configVersion  Int?
+  createdAt      DateTime    @default(now())
+  completedAt    DateTime?
+  theme          Theme       @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  scrapeJobs     ScrapeJob[]
+}
+
+model ScrapeJob {
+  id             String   @id @default(cuid())
+  ingestionJobId String
+  url            String
+  canonicalUrl   String?
+  status         String
+  createdAt      DateTime @default(now())
+  completedAt    DateTime?
+  ingestionJob   IngestionJob @relation(fields: [ingestionJobId], references: [id], onDelete: Cascade)
+  attempts       ExtractionAttempt[]
+  extractedDoc   ExtractedDocument?
+}
+
+model ExtractionAttempt {
+  id               String   @id @default(cuid())
+  scrapeJobId      String
+  method           String
+  status           String
+  durationMs       Int?
+  cleanTextLength  Int?
+  errorMsg         String?
+  createdAt        DateTime @default(now())
+  scrapeJob        ScrapeJob @relation(fields: [scrapeJobId], references: [id], onDelete: Cascade)
+}
+
+model ExtractedDocument {
+  id               String    @id @default(cuid())
+  scrapeJobId      String    @unique
+  themeId          String
+  rawHtml          String?   @db.Text
+  cleanText        String    @db.Text
+  headline         String?
+  canonicalUrl     String?
+  sourceDomain     String?
+  publishedAt      DateTime?
+  scrapedAt        DateTime  @default(now())
+  language         String?
+  extractionMethod String
+  textLength       Int
+  qualityScore     Float?
+  qualityFlags     Json?
+  dedupHash        String
+  createdAt        DateTime  @default(now())
+  scrapeJob        ScrapeJob  @relation(fields: [scrapeJobId], references: [id], onDelete: Cascade)
+  theme            Theme     @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  newsItem         NewsItem?
+}
+
+model NewsItem {
+  id               String   @id @default(cuid())
+  extractedDocId    String   @unique
+  themeId           String
+  payload           Json
+  summaryEditorial  String?  @db.Text
+  summaryExtraction Json?
+  entities          Json?
+  topics            Json?
+  deliveredAt       DateTime?
+  deliveryStatus   String?
+  createdAt         DateTime @default(now())
+  extractedDoc      ExtractedDocument @relation(fields: [extractedDocId], references: [id], onDelete: Cascade)
+  theme             Theme    @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  claims            Claim[]
+}
+
+model Claim {
+  id                 String   @id @default(cuid())
+  newsItemId          String
+  text               String   @db.Text
+  verified           Boolean  @default(false)
+  paragraphIndex      Int?
+  charStart          Int?
+  charEnd            Int?
+  factCheckVerdict   String?
+  factCheckConfidence Float?
+  factCheckSources   Json?
+  factCheckedAt      DateTime?
+  createdAt          DateTime @default(now())
+  newsItem           NewsItem @relation(fields: [newsItemId], references: [id], onDelete: Cascade)
+  evidences          Evidence[]
+}
+
+model Evidence {
+  id      String  @id @default(cuid())
+  claimId String
+  type    String
+  ref     String
+  content String? @db.Text
+  claim   Claim   @relation(fields: [claimId], references: [id], onDelete: Cascade)
+}
+
+model DeliveryLog {
+  id          String   @id @default(cuid())
+  themeId     String
+  newsItemId  String?
+  endpointUrl String
+  statusCode  Int?
+  requestId   String?
+  errorMsg    String?
+  attemptedAt DateTime @default(now())
+  theme       Theme    @relation(fields: [themeId], references: [id], onDelete: Cascade)
+}
+
+model DailyBudgetUsage {
+  id      String   @id @default(cuid())
+  themeId String
+  date    DateTime @db.Date
+  used    Int      @default(0)
+  limit   Int
+  theme   Theme    @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  @@unique([themeId, date])
+}
+
+model DailyTuningRun {
+  id              String   @id @default(cuid())
+  themeId         String
+  ranAt           DateTime @default(now())
+  recommendations Json
+  appliedChanges  Json?
+  theme           Theme    @relation(fields: [themeId], references: [id], onDelete: Cascade)
+}
